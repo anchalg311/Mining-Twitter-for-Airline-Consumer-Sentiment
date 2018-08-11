@@ -1,0 +1,218 @@
+---
+title: "Twitter Airline Sentiment Analysis"
+author: "Anchal Gupta"
+date: "April 24, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+############# Load all required libraries ###########
+
+```{r}
+install.packages("twitteR", dependencies = T)
+install.packages("plyr")
+install.packages("doBy")
+install.packages("XML")
+library("twitteR")
+library("plyr")
+library("stringr")
+library("stringi")
+library("ggplot2")
+library("tm")
+library("doBy")
+library("XML")
+```
+
+###### Connect to Twitter API #########
+
+```{r}
+consumer_key <- "CEU872LLP3b9HPKhqcxDXPgUp" 
+consumer_secret <- "NNsRUCHVUqzZwAnZiUlQNhoL8VWMCNZJQKE7bmmagtTG8h2XP4"
+access_token <- "988954767878598656-hwxxj0BKnLWiD1mirx4Cj6TysaCqQkz"
+access_secret <- "a08lHRUAYd6TE6a2NkjE9NKrTJ2YW0KNlC2vOuUOlo9x6"
+setup_twitter_oauth(consumer_key, consumer_secret, access_token, access_secret)
+
+```
+
+############# Extract tweets mentioning Delta Airlines ###############
+
+```{r}
+delta.tweets<- searchTwitter('@delta',n=1500)
+length(delta.tweets)
+class(delta.tweets)
+tweet<-delta.tweets[[1]]
+tweet
+class(tweet)
+tweet$getScreenName()
+tweet$getText()
+
+delta.text=laply(delta.tweets, function(t)t$getText())
+length(delta.text)
+
+head(delta.text,5)
+class(delta.text)
+
+
+############## Loading the Opinion Lexicon #############
+lex.pos<- scan('C:/Users/ergup/Desktop/570/Twitter_Sentiment_Analysis/opinion-lexicon-English/positive-words.txt',what='character', comment.char = ';')
+
+lex.neg<- scan('C:/Users/ergup/Desktop/570/Twitter Sentiment Analysis/opinion-lexicon-English/negative-words.txt',what='character', comment.char = ';')
+
+############# Add some more words to positive and negative words ########
+pos.words<- c(lex.pos,'upgrade')
+neg.words<- c(lex.neg,'wtf','wait','waiting','epicfall','mechanical')
+
+```
+
+################## Calculate sentiment score ###########
+
+```{r}
+sentiment.score <- function(sentences,pos.words,neg.words, .progress='none')
+{
+  require(plyr)
+  require(stringr)
+  
+  scores<- laply(sentences,function(sentence,pos.words, neg.words)
+    {
+      sentence <- gsub("[[:punct:]]", "", sentence)
+      sentence<-  gsub( "[[:cntrl:]]", "", sentence)
+      
+      sentence=gsub("\\d+", "",sentence)
+      sentence=tolower(sentence)
+      word.list=str_split(sentence,'\\s+')
+      words=unlist(word.list)
+      
+      pos.matches= match(words,pos.words)
+      neg.matches=match(words, neg.words)
+      
+      pos.matches=!is.na(pos.matches)
+      neg.matches=!is.na(neg.matches)
+      
+      score=sum(pos.matches) - sum(neg.matches)
+      return(score)
+    },pos.words,neg.words,.progress = .progress)
+  
+  scores.df=data.frame(score=scores,text=sentences)
+  return(scores.df)
+}
+
+sample=c("@Delta Delayed connection #annoyed",
+         "Surprised and happy with @Delta service. Patient and helpful agents #remarkable")
+
+
+result.score<- sentiment.score(sample,pos.words,neg.words)
+result.score
+
+##removing images
+delta.text=str_replace_all(delta.text,"[^[:graph:]]", " ")
+
+delta.score<- sentiment.score(delta.text, pos.words,neg.words, .progress='text')
+delta.score$Airline ='Delta'
+delta.score$Code= 'DL'
+delta.score
+
+hist(delta.score$score)
+```
+
+############# Extract tweets mentioning Alaska Airlines ###############
+
+```{r}
+alaska.tweets<- searchTwitter('@alaskaairlines',n=28)
+length(alaska.tweets)
+class(alaska.tweets)
+tweet<-alaska.tweets[[1]]
+tweet
+class(tweet)
+tweet$getScreenName()
+tweet$getText()
+
+alaska.text =laply(alaska.tweets, function(t)t$getText())
+length(alaska.text)
+
+alaska.text=str_replace_all(alaska.text,"[^[:graph:]]", " ")
+alaska.score<- sentiment.score(alaska.text, pos.words,neg.words, .progress='text')
+alaska.score$Airline ='Alaska'
+alaska.score$Code= 'AK'
+alaska.score
+
+hist(alaska.score$score)
+```
+
+############# Extract tweets mentioning United Airlines ###############
+
+```{r}
+united.tweets<- searchTwitter('@unitedairlines',n=65)
+length(united.tweets)
+class(united.tweets)
+tweet<-united.tweets[[1]]
+united.tweets
+class(united.tweets)
+tweet$getScreenName()
+tweet$getText()
+
+united.text =laply(united.tweets, function(t)t$getText())
+length(united.text)
+
+united.text=str_replace_all(united.text,"[^[:graph:]]", " ")
+united.score<- sentiment.score(united.text, pos.words,neg.words, .progress='text')
+united.score$Airline ='United'
+united.score$Code= 'UA'
+united.score
+
+hist(united.score$score)
+```
+
+######### Comparing sentiments for all Airlines #############
+
+```{r}
+
+all.scores= rbind(delta.score, alaska.score, united.score)
+g= ggplot(data=all.scores, mapping = aes(x=score,fill=Airline))
+g= g+geom_histogram(binwidth = 1)
+g= g+facet_grid(Airline~.)
+g= g+theme_bw() 
+g
+
+```
+
+```{r}
+all.scores$very.pos = all.scores$score >=2
+all.scores$very.neg = all.scores$score <= -2
+all.scores[,c(1,3:6)]
+
+all.scores$very.pos = as.numeric(all.scores$very.pos)
+all.scores$very.neg = as.numeric(all.scores$very.neg)
+
+tweets.df= ddply(all.scores, c('Airline','Code'), summarise,
+                 very.pos.count= sum(very.pos),
+                 very.neg.count= sum(very.neg))
+
+tweets.df$total= tweets.df$very.pos.count + tweets.df$very.neg.count
+tweets.df$score = round((tweets.df$very.pos.count/tweets.df.total)*100)
+orderBy(~ score, tweets.df)
+```
+
+############### Compare with ACSI's customer satisfaction index ##############
+
+```{r}
+acsi.url= "http://www.theacsi.org/index.php?option=com_content&view=article&id=147&catid=&Itemid=212&i=Airlines"
+
+acsi.df=readHTMLTable(acsi.url, header = T, which=1,stringsAsFactors=F)
+acsi.df
+acsi.df=acsi.df[,c(1,19)]
+colnames(acsi.df)=c('Airline','score')
+
+acsi.df$Code = c("SW", "AK", "JB", "AM", "AL", "DL", "NA", "NA", "UA", "FR", "SP", "US", "NW", "CN")
+acsi.df$score= as.numeric(acsi.df$score)
+
+compare.df= merge(tweets.df, acsi.df, by=c('Code','Airline'), suffixes=c('.twitter','.acsi'))
+
+compare.df[1,7]= 52
+
+g= ggplot(data=compare.df, mapping=aes(x=score.twitter, score.acsi)) + geom_point(aes(color=Airline), size=5) + theme_bw()
+
+g= g+geom_smooth(aes(group=1), se=F, method="lm")
+g
+```
